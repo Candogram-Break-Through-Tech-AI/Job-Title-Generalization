@@ -13,6 +13,7 @@ __pycache__/
 # Ignore virtual environment files
 venv/
 env/
+.venv/
 
 # Ignore environment variables
 .env
@@ -20,3 +21,9 @@ env/
 # Ignore large files like logs or temp files
 *.log
 *.tmp
+
+# Ignore virtual environment
+candogram/
+
+# Ignore macOS system files
+.DS_Store
