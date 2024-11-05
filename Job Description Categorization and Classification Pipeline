@@ -1,0 +1,87 @@
+# Import necessary libraries
+import pandas as pd
+import openai
+from bs4 import BeautifulSoup
+import json
+from sklearn.model_selection import train_test_split
+import fasttext
+
+# Set OpenAI API key (replace 'your_openai_api_key' with your actual API key)
+openai.api_key = "your_openai_api_key"
+
+# Load your dataset of job descriptions
+df = pd.read_csv('data_set.csv')  # Make sure 'data_set.csv' exists in the working directory
+
+# Function to clean HTML from job descriptions
+def clean_html(text):
+    return BeautifulSoup(text, "html.parser").get_text() if isinstance(text, str) else text
+
+# Apply HTML cleaning to the JobDescription column
+df['JobDescription'] = df['JobDescription'].apply(clean_html)
+
+# Function to call OpenAI's API for categorizing job descriptions
+def call_openai_api(job_posting):
+    prompt = f"""
+    Break up the following job description into the following categories: Marketing, Description, Requirements, Legal.
+    For each category, return an array containing the sentences from the job posting corresponding to the category in JSON format.
+
+    Job Posting:
+    "{job_posting}"
+    """
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",  # Use the appropriate OpenAI model
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Apply the API categorization function to a random sample of job descriptions
+sampled_data = df['JobDescription'].sample(n=500, random_state=42)
+categorized_data = sampled_data.apply(call_openai_api)
+
+# Save categorized data to a CSV file
+result_df = pd.DataFrame({
+    'JobDescription': sampled_data,
+    'Categorized_Posting': categorized_data
+})
+result_df.to_csv('categorized_output.csv', index=False)
+
+# Function to format categorized data for FastText training
+def extract_fasttext_format(row):
+    try:
+        categorized_data = json.loads(row['Categorized_Posting'])
+        fasttext_lines = []
+        for category, sentences in categorized_data.items():
+            for sentence in sentences:
+                # Label as 'Description' or 'Other' for FastText
+                label = "__label__Description" if category == "Description" else "__label__Other"
+                fasttext_lines.append(f"{label} {sentence.strip()}")
+        return fasttext_lines
+    except json.JSONDecodeError:
+        return []
+
+# Prepare FastText data from categorized output
+fasttext_data = result_df.apply(extract_fasttext_format, axis=1)
+all_sentences = [sentence for sublist in fasttext_data for sentence in sublist]
+train_data, valid_data = train_test_split(all_sentences, test_size=0.2, random_state=42)
+
+# Save FastText data for training and validation
+with open('fasttext_train.txt', 'w') as f:
+    for line in train_data:
+        f.write(line + '\n')
+
+with open('fasttext_valid.txt', 'w') as f:
+    for line in valid_data:
+        f.write(line + '\n')
+
+# Train the FastText model
+model = fasttext.train_supervised(input="fasttext_train.txt", epoch=25, lr=1.0, wordNgrams=2)
+
+# Evaluate the FastText model
+result = model.test("fasttext_valid.txt")
+print(f"Validation Results: Precision: {result[1]:.4f}, Recall: {result[2]:.4f}, Accuracy: {result[0] / len(valid_data):.4f}")
+
+# Save the trained model
+model.save_model("job_description_classifier.bin")
